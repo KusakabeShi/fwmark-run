@@ -1,0 +1,105 @@
+name: Publish
+
+on:
+  push:
+  workflow_dispatch: 
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  x86_64:
+      runs-on: ubuntu-20.04
+      name: Build for ${{ matrix.distro }} x86_64
+      steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - name: Retrieve version
+        shell: bash
+        run: |
+          git config --global --add safe.directory '*'
+          VERSION=$(git describe --abbrev=0)
+          echo "::set-output name=VERSION::$VERSION"
+        id: version
+      - name: Install requirements
+
+        run: |
+          sudo apt-get -y update
+          sudo apt-get install -y build-essential
+      - name: Build x86_64
+        run: |
+          make
+      - uses: actions/upload-artifact@v2
+        with:
+          name: fwmark_run-x86_64
+          path: ld_fwmark.so
+      - name: Upload x86_64 build
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: ld_fwmark.so
+          overwrite: true
+          asset_name: ld_fwmark_x86_64.so
+          release_name:  ${{ steps.version.outputs.VERSION }}
+          tag: ${{ steps.version.outputs.VERSION }}
+  multi-arch:
+    runs-on: ubuntu-20.04
+    name: Build on ${{ matrix.distro }} ${{ matrix.arch }}
+    strategy:
+      matrix:
+        include:
+          - arch: aarch64
+          - arch: armv7
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - name: Retrieve version
+        shell: bash
+        run: |
+          git config --global --add safe.directory '*'
+          VERSION=$(git describe --abbrev=0)
+          echo "::set-output name=VERSION::$VERSION"
+        id: version
+      - uses: uraimo/run-on-arch-action@v2.0.5
+        name: Build artifact
+        id: build
+        with:
+          arch: ${{ matrix.arch }}
+          distro: ubuntu20.04
+          githubToken: ${{ github.token }}
+          setup: |
+            mkdir -p "${PWD}/artifacts"
+          dockerRunArgs: |
+            --volume "${PWD}/artifacts:/artifacts"
+          env: |
+            artifact_dir: ${{ matrix.arch }}
+          shell: /bin/sh
+          install: |
+            apt-get -y update
+            apt install -y build-essential
+          run: |
+            make
+            mkdir /artifacts/${artifact_dir}
+            cp ld_fwmark.so /artifacts/${artifact_dir}
+      - uses: actions/upload-artifact@v2
+        if: ${{ matrix.arch == 'armv7' }}
+        with:
+          name: fwmark_run-armv7
+          path: artifacts/armv7
+      - uses: actions/upload-artifact@v2
+        if: ${{ matrix.arch == 'aarch64' }}
+        with:
+          name: fwmark_run-aarch64
+          path: artifacts/aarch64
+      - name: Upload ${{ matrix.arch }} dynamic build
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: artifacts/${{ matrix.arch }}/ld_fwmark.so
+          asset_name: ld_fwmark-${{ matrix.arch }}.so
+          overwrite: true
+          release_name:  ${{ steps.version.outputs.VERSION }}
+          tag: ${{ steps.version.outputs.VERSION }}
